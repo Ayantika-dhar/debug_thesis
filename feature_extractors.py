@@ -413,14 +413,6 @@ class BEATSRunner(torch.nn.Module):
         loader = AudioDataset(input_tensor, sr, n_frames, chunk_length_s=chunk_length_s, overlap=overlap, sr_output=16000)
         loader = torch.utils.data.DataLoader(loader, batch_size=batch_size, num_workers=num_workers)
     
-    '''
-        for input_ in loader:
-            input_ = input_.to(DEVICE)
-            output = self.__call__(input_)
-            video_output['features'].append(output)
-        video_output['features'] = torch.cat(video_output['features'], dim=0)
-        video_output['predictions'] = None 
-        '''
         #changes made to mitigate torch.cat() crashing down on empty lists
 
         video_output['features'] = []
