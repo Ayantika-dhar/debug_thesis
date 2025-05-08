@@ -341,7 +341,7 @@ class CLIPRunner(torch.nn.Module):
         
         return video_output
     
-
+'''
 class BEATSRunner(torch.nn.Module):
     # Audio classifier
     # Source: https://github.com/microsoft/unilm/tree/master/beats
@@ -450,6 +450,113 @@ class BEATSRunner(torch.nn.Module):
             video_output['predictions'] = predictions
 
         return video_output
+
+
+        '''
+
+
+class BEATSRunner(torch.nn.Module):
+    # Audio classifier
+    # Source: https://github.com/microsoft/unilm/tree/master/beats
+    def __init__(self, predict=False):
+        super(BEATSRunner, self).__init__()
+        self.predict = predict
+        with open("preprocessing/data/labels/beats_ontology.json", "r") as f:
+            labels = json.load(f)
+        self.id_to_label = {label['id']: label['name'] for label in labels}
+        self.target_sample_rate = 16000
+
+        # Load the pre-trained checkpoints
+        model_path = 'preprocessing/data/pretrained_models/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt'
+        if not os.path.exists(model_path):
+            print('Downloading BEATS model')
+            url = "https://huggingface.co/spaces/fffiloni/SALMONN-7B-gradio/resolve/677c0125de736ab92751385e1e8664cd03c2ce0d/beats/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt"
+            u.download(url, model_path)
+
+        checkpoint = torch.load(model_path)
+        self.label_dict = checkpoint["label_dict"]
+        cfg = BEATsConfig(checkpoint['cfg'])
+        self.BEATs_model = BEATs(cfg)
+        self.BEATs_model.load_state_dict(checkpoint['model'])
+        self.BEATs_model.eval()
+
+        if not self.predict:
+            self.BEATs_model.predictor = None
+
+    def __call__(self, input_):
+        with torch.no_grad():
+            padding_mask = torch.zeros(input_.shape).bool().to(DEVICE)
+            output = self.BEATs_model.extract_features(input_, padding_mask=padding_mask)
+            output = output.mean(1)
+            return output
+
+    def to_device(self, device):
+        if device == 'cuda' and not torch.cuda.is_available():
+            print('CUDA not available.')
+        elif device not in ('cpu', 'cuda'):
+            print('Device can only be cpu or cuda.')
+        else:
+            self.to(device)
+
+    def process_video(self, input_tensor=None, video_path=None, n_frames=None, batch_size=8, num_workers=2, fps=None, overlap=0.5, sr=None, **kwargs):
+        video_output = {'features': [], 'predictions': []}
+
+        if input_tensor is None and video_path is None:
+            return video_output
+        elif input_tensor is None:
+            input_tensor, sr = u_video.extract_audio(video_path)
+            if input_tensor is None:
+                return {'features': [], 'predictions': []}
+            input_tensor = torch.Tensor(input_tensor)
+        elif sr is None:
+            raise ValueError('If you are providing input audio, you should also provide sampling rate.')
+
+        if len(input_tensor.shape) == 1:
+            input_tensor = input_tensor.unsqueeze(0)
+
+        if fps is not None:
+            n_frames = None
+            step_size_s = 1 / fps
+            chunk_length_s = step_size_s / overlap
+        else:
+            chunk_length_s = 3
+
+        input_length_s = input_tensor.shape[-1] / sr
+        if input_length_s < chunk_length_s:
+            return {'features': [], 'predictions': []}
+
+        loader = AudioDataset(input_tensor, sr, n_frames, chunk_length_s=chunk_length_s, overlap=overlap, sr_output=16000)
+        loader = torch.utils.data.DataLoader(loader, batch_size=batch_size, num_workers=num_workers)
+
+        video_output['features'] = []
+
+        for input_ in loader:
+            input_ = input_.to(DEVICE)
+            output = self.__call__(input_)
+            if output is not None:
+                video_output['features'].append(output)
+
+        if not video_output['features']:
+            print(f"[Warning] No features extracted — possibly due to empty frames or decoding failure.")
+            with open("failed_videos.log", "a") as f:
+                f.write(f"{video_path} - No features extracted\n")
+            return {}
+
+        video_output['features'] = torch.cat(video_output['features'], dim=0)
+        video_output['predictions'] = None
+
+        if self.predict:
+            mean_feature = video_output['features'].mean(0)
+            logits = self.BEATs_model.predictor(mean_feature)
+            logits = torch.sigmoid(logits)
+
+            topk_values, topk_indices = torch.topk(logits, k=5, dim=-1)
+            predictions = [(self.id_to_label[self.label_dict[idx.item()]], val.item())
+                           for idx, val in zip(topk_indices, topk_values)]
+            video_output['predictions'] = predictions
+
+        return video_output
+
     
 
 class AudioDataset(Dataset):
