@@ -28,10 +28,6 @@ def get_device(model):
     return next(model.parameters()).device.type
 
 class FaceExtractAndClassify(torch.nn.Module):
-    # Extracts faces and then classifies their emotions
-    # Sources:
-    # https://github.com/ultralytics/yolov5
-    # https://huggingface.co/trpakov/vit-face-expression
     def __init__(self, use_layernorm=False):
         super(FaceExtractAndClassify, self).__init__()
         self.face_detector_model = FaceDetector()
@@ -48,34 +44,32 @@ class FaceExtractAndClassify(torch.nn.Module):
     def get_device(self):
         return get_device(self)
 
-
-    '''
     def process_video(self, input_tensor=None, video_path=None, fps=None, use_scenecuts=False, n_frames=None, **kwargs):
-        if input_tensor is None and video_path == None:
+        if input_tensor is None and video_path is None:
             raise ValueError('You should provide either input frames or video path.')
         elif input_tensor is None:
             if use_scenecuts:
-                input_tensor, _ = u_video.video_to_midscenes(video_path)  # Get scenes  
+                input_tensor, _ = u_video.video_to_midscenes(video_path)
             else:
                 input_tensor, input_fps = u.extract_frames(str(video_path), output_fps=fps)
-            
-            if n_frames != None:
+
+            if n_frames is not None:
                 indices = u.equidistant_indices(input_tensor.shape[0], n_frames)
                 input_tensor = input_tensor[indices, ...]
 
         video_features = []
         video_predictions = []
         video_coordinates = []
+
         for input_frame in input_tensor:
             input_frame = input_frame.squeeze()
             faces, coordinates = self.face_detector_model(input_frame)
-            
-            if faces == []:
+
+            if not faces:
                 frame_predictions, frame_features, coordinates = None, None, None
             else:
                 face_sizes = [face.size for face in faces]
                 largest_face_inds = np.argsort(np.array(face_sizes))[::-1]
-                # get two largest faces
                 frame_features = []
                 frame_predictions = []
                 for face in faces:
@@ -84,73 +78,22 @@ class FaceExtractAndClassify(torch.nn.Module):
                     frame_predictions.append(face_output['predictions'])
 
                 two_largest_inds = largest_face_inds[:2].tolist()
-                # get mean of two largest faces
                 frame_features = [frame_features[i] for i in two_largest_inds]
                 frame_features = torch.stack(frame_features, 0).mean(0)
                 video_features.append(frame_features)
 
             video_coordinates.append(coordinates)
             video_predictions.append(frame_predictions)
-                
-        if video_features != []:
+
+        if video_features:
             video_features = torch.stack(video_features, 0)
+        else:
+            print(f"[Warning] No face features extracted for video: {video_path}")
+            with open("failed_videos.log", "a") as f:
+                f.write(f"{video_path} - No face features extracted\n")
+            return {'features': [], 'predictions': [], 'coordinates': []}
 
         return {'features': video_features, 'predictions': video_predictions, 'coordinates': video_coordinates}
-        '''
-
-
-def process_video(self, input_tensor=None, video_path=None, fps=None, use_scenecuts=False, n_frames=None, **kwargs):
-    if input_tensor is None and video_path is None:
-        raise ValueError('You should provide either input frames or video path.')
-    elif input_tensor is None:
-        if use_scenecuts:
-            input_tensor, _ = u_video.video_to_midscenes(video_path)  # Get scenes  
-        else:
-            input_tensor, input_fps = u.extract_frames(str(video_path), output_fps=fps)
-        
-        if n_frames is not None:
-            indices = u.equidistant_indices(input_tensor.shape[0], n_frames)
-            input_tensor = input_tensor[indices, ...]
-
-    video_features = []
-    video_predictions = []
-    video_coordinates = []
-
-    for input_frame in input_tensor:
-        input_frame = input_frame.squeeze()
-        faces, coordinates = self.face_detector_model(input_frame)
-        
-        if faces == []:
-            frame_predictions, frame_features, coordinates = None, None, None
-        else:
-            face_sizes = [face.size for face in faces]
-            largest_face_inds = np.argsort(np.array(face_sizes))[::-1]
-            # get two largest faces
-            frame_features = []
-            frame_predictions = []
-            for face in faces:
-                face_output = self.face_emotion_model(face)
-                frame_features.append(face_output['features'].detach())
-                frame_predictions.append(face_output['predictions'])
-
-            two_largest_inds = largest_face_inds[:2].tolist()
-            # get mean of two largest faces
-            frame_features = [frame_features[i] for i in two_largest_inds]
-            frame_features = torch.stack(frame_features, 0).mean(0)
-            video_features.append(frame_features)
-
-        video_coordinates.append(coordinates)
-        video_predictions.append(frame_predictions)
-
-    if video_features:
-        video_features = torch.stack(video_features, 0)
-    else:
-        print(f"[Warning] No face features extracted for video: {video_path}")
-        with open("failed_videos.log", "a") as f:
-            f.write(f"{video_path} - No face features extracted\n")
-        return {'features': [], 'predictions': [], 'coordinates': []}
-
-    return {'features': video_features, 'predictions': video_predictions, 'coordinates': video_coordinates}
 
 
 class FaceEmotionClassifier(torch.nn.Module):
